@@ -1,0 +1,790 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# # Property Analysis for Home Purchase
+# 
+# This notebook analyzes property data to identify properties that fit your criteria and ranks them based on desirability and seller likelihood.
+# 
+# ## 1. Setup and Imports
+
+# In[1]:
+
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime, timedelta
+import os
+import re
+
+
+# Enable interactive plots
+get_ipython().run_line_magic('matplotlib', 'inline')
+
+
+# Set plotting style
+sns.set(style="whitegrid")
+plt.rcParams['figure.figsize'] = [12, 8]
+
+
+# Set display options to see more columns
+pd.set_option('display.max_columns', 50)
+pd.set_option('display.max_rows', 100)
+
+
+# Print version info
+print(f"Pandas version: {pd.__version__}")
+print(f"NumPy version: {np.__version__}")
+print(f"Matplotlib version: {plt.matplotlib.__version__}")
+print(f"Seaborn version: {sns.__version__}")
+
+
+# ## 2. Load The Data
+# 
+# Load the property data, with an option to test on a small subset first.
+
+# In[2]:
+
+
+def load_data(file_path):
+    """
+    Load and clean property data from CSV file.
+    
+    Args:
+        file_path (str): Path to the CSV file
+        
+    Returns:
+        pandas.DataFrame: Cleaned property data
+    """
+    print(f"Loading data from {file_path}...")
+    
+    # Use dtype parameter to specify data types upfront for more efficient loading
+    # Also use low_memory=False to avoid mixed type inference warnings
+    dtypes = {
+        'SiteZIP': str,
+        'LandUseDsc': str
+    }
+    
+    properties = pd.read_csv(file_path, dtype=dtypes, low_memory=False)
+    print(f"Original data shape: {properties.shape}")
+    
+    # Convert date columns - with a specific format for efficiency
+    if 'DocRcrdgDt_County' in properties.columns:
+        properties['DocRcrdgDt_County'] = pd.to_datetime(
+            properties['DocRcrdgDt_County'], errors='coerce', format='%Y-%m-%d'
+        )
+    
+    # Use vectorized operations instead of astype+str+replace chain
+    currency_columns = [
+        'MktTtlVal', 'SaleAmt_County', 'TaxTtl1', 'TaxTtl2', 'TaxTtl3'
+    ]
+    for col in currency_columns:
+        if col in properties.columns:
+            # This is more efficient than the chain of operations
+            properties[col] = pd.to_numeric(
+                properties[col].astype(str).str.replace(r'[\$,]', '', regex=True),
+                errors='coerce'
+            )
+    
+    # Handle other numeric columns in a batch when possible
+    other_numeric_columns = [
+        'BsmtFinSqFt', 'BsmtUnFinSqFt', 'BathHalfCt', 'Bath3QtrCt',
+        'BathFullCt', 'BathTtlCt', 'BedCt', 'BldgSqFt', 'LotSqFt',
+        'YrBlt', 'StoriesCt', 'Acres'
+    ]
+    
+    # Check which columns exist first
+    existing_num_cols = [col for col in other_numeric_columns if col in properties.columns]
+    if existing_num_cols:
+        properties[existing_num_cols] = properties[existing_num_cols].apply(
+            pd.to_numeric, errors='coerce'
+        )
+    
+    # Use boolean conversion directly where possible
+    boolean_columns = [
+        'OwnerOccupiedInd', 'BareLandInd', 'InvestmentProp', 
+        'BankOwnedInd', 'OwnerCorporateInd'
+    ]
+    for col in boolean_columns:
+        if col in properties.columns:
+            properties[col] = properties[col].map({
+                'TRUE': True, 'FALSE': False, True: True, False: False
+            })
+    
+    print(f"Cleaned data shape: {properties.shape}")
+    print(f"Sample market values: {properties['MktTtlVal'].dropna().head().tolist()}")
+    
+    return properties
+
+
+# ### 3. Data Loading Function
+# 
+# Define a function to load and clean the property data CSV.
+
+# In[3]:
+
+
+# Set path to your data file
+file_path = "../data/Category_3.csv"
+
+# Load and clean data
+properties = load_data(file_path)
+
+
+# ## 4. Examine the Data
+# 
+# Let's examine the data to understand what we're working with.
+
+# In[4]:
+
+
+# Display a few sample rows
+properties.head()
+
+
+# In[5]:
+
+
+# Check data types and missing values
+properties.info()
+
+
+# In[6]:
+
+
+# Look at statistics for numeric columns
+properties.describe()
+
+
+# In[7]:
+
+
+# Check which ZIP codes are present
+if 'SiteZIP' in properties.columns:
+    print("ZIP code counts:")
+    print(properties['SiteZIP'].value_counts())
+
+
+# In[8]:
+
+
+# Check distribution of property types
+if 'LandUseDsc' in properties.columns:
+    print("Land use types:")
+    print(properties['LandUseDsc'].value_counts().head(10))
+
+
+# ## 5. Filter Functions
+# 
+# Define functions to filter properties based on our criteria.
+
+# In[9]:
+
+
+def filter_category3(properties):
+    """
+    Apply Category 3 (Single-Family Residences) filters
+    
+    Args:
+        properties (pandas.DataFrame): Property data
+        
+    Returns:
+        pandas.DataFrame: Filtered property data
+    """
+    print("Filtering for Category 3 (Single-Family Residences) with criteria:")
+    print("  - At least 1.5 bathrooms")
+    print("  - At least 2 bedrooms")
+    print("  - In ZIP codes: 98106, 98116, 98126, 98136")
+    print("  - Market value between $450,000-$650,000")
+    print("  - Property type: Single Family")
+
+    # Normalize key fields
+    if 'SiteZIP' in properties.columns:
+        properties['SiteZIP'] = properties['SiteZIP'].astype(str).str.strip()
+    
+    if 'LandUseDsc' in properties.columns:
+        properties['LandUseDsc'] = properties['LandUseDsc'].astype(str).str.strip()
+
+    category3_filter = (
+        (properties['BathTtlCt'] >= 1.5) &
+        (properties['BedCt'] >= 2) &
+        (properties['SiteZIP'].isin(['98106', '98116', '98126', '98136'])) &
+        (properties['MktTtlVal'] >= 450000) &
+        (properties['MktTtlVal'] <= 650000) &
+        (properties['LandUseDsc'].str.contains('Single Family', case=False, na=False))
+    )
+
+    cat3_properties = properties[category3_filter].copy()
+
+    print(f"Found {len(cat3_properties)} properties matching Category 3 criteria out of {len(properties)} total properties")
+    
+    if len(cat3_properties) > 0:
+        print("\nBreakdown by ZIP code:")
+        print(cat3_properties['SiteZIP'].value_counts())
+
+    return cat3_properties
+
+def calculate_zip_averages(properties):
+    """
+    Calculate average values by ZIP code
+    
+    Args:
+        properties (pandas.DataFrame): Property data
+        
+    Returns:
+        pandas.DataFrame: Average values by ZIP code
+    """
+    zip_averages = properties.groupby('SiteZIP')['MktTtlVal'].mean().reset_index()
+    zip_averages.rename(columns={'MktTtlVal': 'ZipAvgValue'}, inplace=True)
+    
+    print("ZIP code average values:")
+    print(zip_averages)
+    
+    return zip_averages
+
+
+# ## 6. Apply Filters
+# 
+# Let's apply the filters and see what properties match our criteria.
+
+# In[10]:
+
+
+# Apply Category 3 filters
+cat3_properties = filter_category3(properties)
+
+
+# Display the first few properties that match
+if len(cat3_properties) > 0:
+    # Select a subset of columns to display
+    display_columns = [
+        'SiteAddr', 'SiteCity', 'SiteZIP', 'BathTtlCt', 'BedCt',
+        'BldgSqFt', 'LotSqFt', 'YrBlt', 'MktTtlVal', 'LandUseDsc'
+    ]
+    
+    # Make sure all requested columns exist
+    display_columns = [col for col in display_columns if col in cat3_properties.columns]
+    
+    print("\nSample of matching Category 3 properties:")
+    display(cat3_properties[display_columns].head())
+else:
+    print("\nNo properties match Category 3 criteria.")
+
+
+# Calculate neighborhood averages
+if len(cat3_properties) > 0:
+    zip_averages = calculate_zip_averages(cat3_properties)
+    
+    # Merge with the properties dataframe
+    cat3_properties = cat3_properties.merge(zip_averages, on='SiteZIP', how='left')
+
+
+# ## 7. Exploratory Data Analysis
+# 
+# Let's visualize some aspects of the filtered properties to better understand them.
+
+# In[11]:
+
+
+# Only run if we have matching properties
+if len(cat3_properties) > 0:
+    # Distribution of properties by ZIP code
+    plt.figure(figsize=(10, 6))
+    ax = sns.countplot(data=cat3_properties, x='SiteZIP')
+    plt.title('Number of Properties by ZIP Code', fontsize=16)
+    plt.xlabel('ZIP Code', fontsize=12)
+    plt.ylabel('Count', fontsize=12)
+    
+    # Add counts on top of bars
+    for p in ax.patches:
+        ax.annotate(f'{int(p.get_height())}', 
+                   (p.get_x() + p.get_width() / 2., p.get_height()),
+                   ha='center', va='bottom', fontsize=12)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Distribution of property values
+    plt.figure(figsize=(12, 6))
+    sns.histplot(cat3_properties['MktTtlVal'], bins=20, kde=True)
+    plt.title('Distribution of Property Values', fontsize=16)
+    plt.xlabel('Market Total Value ($)', fontsize=12)
+    plt.ylabel('Count', fontsize=12)
+    plt.tight_layout()
+    plt.show()
+    
+    # Building Size vs Market Value
+    plt.figure(figsize=(12, 8))
+    sns.scatterplot(data=cat3_properties, x='BldgSqFt', y='MktTtlVal', hue='SiteZIP', alpha=0.7)
+    plt.title('Building Size vs Market Value by ZIP Code', fontsize=16)
+    plt.xlabel('Building Square Footage', fontsize=12)
+    plt.ylabel('Market Value ($)', fontsize=12)
+    plt.tight_layout()
+    plt.show()
+    
+    # Boxplot of property values by ZIP code
+    plt.figure(figsize=(12, 8))
+    sns.boxplot(data=cat3_properties, x='SiteZIP', y='MktTtlVal')
+    plt.title('Property Value Distribution by ZIP Code', fontsize=16)
+    plt.xlabel('ZIP Code', fontsize=12)
+    plt.ylabel('Market Value ($)', fontsize=12)
+    plt.tight_layout()
+    plt.show()
+
+
+# ## 8. Scoring Functions - Desirability - Category 3
+# 
+# Now let's define functions to scorecat3 each property on desirability factors.
+
+# In[12]:
+
+
+#========== DESIRABILITY SCORE FUNCTIONS - CATEGORY 3 ==========
+
+
+def calculate_property_type_scorecat3(row):
+    """
+    Calculate property type scorecat3 (15 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-15
+    """
+    if (pd.notna(row['LandUseDsc']) and "Single Family" in str(row['LandUseDsc']) and 
+          pd.notna(row['Condition']) and str(row['Condition']).strip().lower() in ['good', 'excellent']):
+        return 15
+    elif (pd.notna(row['LandUseDsc']) and "Single Family" in str(row['LandUseDsc']) and 
+          pd.notna(row['Condition']) and str(row['Condition']).strip().lower() == 'average'):
+        return 12
+    elif pd.notna(row['LandUseDsc']) and "Single Family" in str(row['LandUseDsc']):
+        return 8
+    else:
+        return 0
+
+
+def calculate_bathroom_distribution_scorecat3(row):
+    """
+    Calculate bathroom distribution scorecat3 (15 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-15
+    """
+    bath_full = row['BathFullCt'] if pd.notna(row['BathFullCt']) else 0
+    bath_3qtr = row['Bath3QtrCt'] if pd.notna(row['Bath3QtrCt']) else 0
+    bath_half = row['BathHalfCt'] if pd.notna(row['BathHalfCt']) else 0
+    
+    # For personal residence, convenience and comfort are key
+    if bath_full >= 1 and (bath_3qtr >= 1 or bath_half >= 1):
+        return 15
+    elif bath_full >= 1:
+        return 10
+    elif bath_3qtr >= 1:
+        return 8
+    else:
+        return 5
+
+
+def calculate_building_size_scorecat3(row):
+    """
+    Calculate building size scorecat3 (10 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-10
+    """
+    # For single-family residence, focus on "right-sized" homes
+    if pd.notna(row['BldgSqFt']):
+        if 1800 <= row['BldgSqFt'] <= 2500:
+            return 10  # Ideal size range
+        elif 1500 <= row['BldgSqFt'] < 1800:
+            return 8   # Still comfortable
+        elif 2500 < row['BldgSqFt'] <= 3000:
+            return 6   # Larger but potentially higher maintenance
+        elif 1200 <= row['BldgSqFt'] < 1500:
+            return 4   # Smaller but workable
+        else:
+            return 2   # Either too small or too large
+    return 0
+
+
+def calculate_basement_space_scorecat3(row):
+    """
+    Calculate basement space scorecat3 (10 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-10
+    """
+    bsmt_fin = row['BsmtFinSqFt'] if pd.notna(row['BsmtFinSqFt']) else 0
+    bsmt_unfin = row['BsmtUnFinSqFt'] if pd.notna(row['BsmtUnFinSqFt']) else 0
+    
+    # For personal residence, mixed use is valuable
+    if bsmt_fin >= 500 and bsmt_unfin >= 200:
+        return 10  # Ideal mix of finished living space and storage/workshop
+    elif bsmt_fin >= 600:
+        return 8   # Good living space
+    elif bsmt_unfin >= 600:
+        return 6   # Good potential for workshop/storage
+    elif (bsmt_fin + bsmt_unfin) > 300:
+        return 4   # Some basement is better than none
+    else:
+        return 0   # No significant basement
+    return 0
+
+
+def calculate_stories_count_scorecat3(row):
+    """
+    Calculate stories count scorecat3 (5 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-5
+    """
+    # For single-family, single-story or 1.5 story may be preferred
+    if pd.notna(row['StoriesCt']):
+        if row['StoriesCt'] == 1:
+            return 5  # Single-story for accessibility
+        elif row['StoriesCt'] == 1.5:
+            return 4  # Good compromise
+        elif row['StoriesCt'] == 2:
+            return 3  # Traditional two-story
+        else:
+            return 1  # More than 2 stories may be less desirable
+    return 1
+
+
+def calculate_zip_code_value_scorecat3(row):
+    """
+    Calculate ZIP code value scorecat3 (15 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-15
+    """
+    # For single-family residence, consider neighborhood quality and amenities
+    if pd.notna(row['SiteZIP']):
+        if row['SiteZIP'] == '98116':
+            return 15  # Best schools, walkability, and amenities
+        elif row['SiteZIP'] == '98136':
+            return 13  # Good access to beach, parks
+        elif row['SiteZIP'] == '98126':
+            return 10  # Good value, improving area
+        elif row['SiteZIP'] == '98106':
+            return 8   # More affordable, some amenities
+        else:
+            return 5
+    return 5
+
+
+def calculate_lot_size_scorecat3(row):
+    """
+    Calculate lot size scorecat3 (10 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-10
+    """
+    # For personal residence, moderate lots are easier to maintain
+    if pd.notna(row['LotSqFt']):
+        if 5000 <= row['LotSqFt'] <= 7500:
+            return 10  # Ideal balance of space and maintenance
+        elif 7500 < row['LotSqFt'] <= 9000:
+            return 8   # Larger yard, more maintenance
+        elif 4000 <= row['LotSqFt'] < 5000:
+            return 6   # Smaller but manageable
+        elif row['LotSqFt'] > 9000:
+            return 4   # Very large lot, significant maintenance
+        else:
+            return 2   # Very small lot
+    return 0
+
+
+def calculate_condition_scorecat3(row):
+    """
+    Calculate condition scorecat3 (10 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-10
+    """
+    # For personal residence, better condition means less immediate work
+    if pd.notna(row['Condition']):
+        condition = str(row['Condition']).strip().lower()
+        if condition == 'excellent':
+            return 10  # Move-in ready
+        elif condition == 'good':
+            return 8   # Minor updates needed
+        elif condition == 'average':
+            return 6   # Some work required
+        elif condition == 'fair':
+            return 4   # Significant work needed
+        else:
+            return 2   # Major renovation required
+    return 0
+
+
+def calculate_year_built_scorecat3(row):
+    """
+    Calculate year built scorecat3 (10 points max)
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-10
+    """
+    # For personal residence, newer is generally better
+    if pd.notna(row['YrBlt']):
+        if row['YrBlt'] >= 2000:
+            return 10  # Modern construction
+        elif row['YrBlt'] >= 1980:
+            return 8   # Relatively modern
+        elif row['YrBlt'] >= 1960:
+            return 6   # Mid-century
+        elif row['YrBlt'] >= 1940:
+            return 4   # Post-war
+        else:
+            return 2   # Very old, may have infrastructure issues
+    return 0
+
+
+def calculate_garage_scorecat3(row):
+    """
+    Calculate garage scorecat3 (10 points max) - NEW SCORE FACTOR
+    
+    Args:
+        row (pandas.Series): Row of property data
+        
+    Returns:
+        int: ScoreCat3 between 0-10
+    """
+    # New score factor for personal garage/storage preferences
+    if pd.notna(row['GarageDsc']):
+        garage_desc = str(row['GarageDsc']).strip().lower()
+        
+        if 'attached' in garage_desc and pd.notna(row['GarageSqFt']) and row['GarageSqFt'] >= 400:
+            return 10  # Attached garage with good space
+        elif 'attached' in garage_desc:
+            return 8   # Any attached garage
+        elif 'detached' in garage_desc and pd.notna(row['GarageSqFt']) and row['GarageSqFt'] >= 400:
+            return 7   # Detached garage with good space
+        elif 'detached' in garage_desc:
+            return 6   # Any detached garage
+        elif 'carport' in garage_desc:
+            return 4   # Carport
+        else:
+            return 2   # Has something, but unclear what
+    else:
+        return 0   # No garage
+
+
+# In[13]:
+
+
+# Test these functions on a sample property to see if they work as expected
+def test_desirability_scoring_functions():
+    # Create a sample property for testing
+    sample_property = pd.Series({
+        'LandUseDsc': 'Single Family(Res Use/Zone)',
+        'BsmtFinSqFt': 700,
+        'BsmtUnFinSqFt': 500,
+        'BathFullCt': 2,
+        'Bath3QtrCt': 1,
+        'BathHalfCt': 0,
+        'BldgSqFt': 2200,
+        'StoriesCt': 1,
+        'SiteZIP': '98126',
+        'LotSqFt': 7000,
+        'Condition': 'Good',
+        'YrBlt': 1985
+    })
+    
+    # Test each scoring function
+    print("Testing desirability scoring functions on sample property...")
+    print(f"Property Type ScoreCat3: {calculate_property_type_scorecat3(sample_property)}")
+    print(f"Bathroom Distribution ScoreCat3: {calculate_bathroom_distribution_scorecat3(sample_property)}")
+    print(f"Building Size ScoreCat3: {calculate_building_size_scorecat3(sample_property)}")
+    print(f"Basement Space ScoreCat3: {calculate_basement_space_scorecat3(sample_property)}")
+    print(f"Stories Count ScoreCat3: {calculate_stories_count_scorecat3(sample_property)}")
+    print(f"ZIP Code Value ScoreCat3: {calculate_zip_code_value_scorecat3(sample_property)}")
+    print(f"Lot Size ScoreCat3: {calculate_lot_size_scorecat3(sample_property)}")
+    print(f"Condition ScoreCat3: {calculate_condition_scorecat3(sample_property)}")
+    print(f"Year Built ScoreCat3: {calculate_year_built_scorecat3(sample_property)}")
+    
+    # Calculate total desirability scorecat3
+    total_scorecat3 = (
+        calculate_property_type_scorecat3(sample_property) +
+        calculate_bathroom_distribution_scorecat3(sample_property) +
+        calculate_building_size_scorecat3(sample_property) +
+        calculate_basement_space_scorecat3(sample_property) +
+        calculate_stories_count_scorecat3(sample_property) +
+        calculate_zip_code_value_scorecat3(sample_property) +
+        calculate_lot_size_scorecat3(sample_property) +
+        calculate_condition_scorecat3(sample_property) +
+        calculate_year_built_scorecat3(sample_property)
+    )
+    
+    print(f"Total Desirability ScoreCat3: {total_scorecat3}")
+
+
+
+
+# Run the test to see if our scoring functions work correctly
+test_desirability_scoring_functions()
+
+
+# ## 9. Calculate ScoreCat3s for All Properties
+# 
+# Apply the scoring functions to all filtered properties.
+
+# In[14]:
+
+
+def calculate_all_scorecat3s(properties):
+    """
+    Calculate all individual scorecat3s for properties
+    
+    Args:
+        properties (pandas.DataFrame): Property data
+        
+    Returns:
+        pandas.DataFrame: Property data with scorecat3s
+    """
+    # Calculate desirability scorecat3s
+    print("Calculating desirability scorecat3s...")
+    properties['PropertyTypeScoreCat3'] = properties.apply(calculate_property_type_scorecat3, axis=1)
+    properties['BathroomDistributionScoreCat3'] = properties.apply(calculate_bathroom_distribution_scorecat3, axis=1)
+    properties['BuildingSizeScoreCat3'] = properties.apply(calculate_building_size_scorecat3, axis=1)
+    properties['BasementSpaceScoreCat3'] = properties.apply(calculate_basement_space_scorecat3, axis=1)
+    properties['StoriesCountScoreCat3'] = properties.apply(calculate_stories_count_scorecat3, axis=1)
+    properties['ZipCodeValueScoreCat3'] = properties.apply(calculate_zip_code_value_scorecat3, axis=1)
+    properties['LotSizeScoreCat3'] = properties.apply(calculate_lot_size_scorecat3, axis=1)
+    properties['ConditionScoreCat3'] = properties.apply(calculate_condition_scorecat3, axis=1)
+    properties['YearBuiltScoreCat3'] = properties.apply(calculate_year_built_scorecat3, axis=1)
+    
+    return properties
+
+
+
+
+def calculate_combined_scorecat3s(properties):
+    """
+    Calculate total and combined scorecat3s, and assign priority tiers
+    
+    Args:
+        properties (pandas.DataFrame): Property data with individual scorecat3s
+        
+    Returns:
+        pandas.DataFrame: Property data with total scorecat3s and priority tiers
+    """
+    # Calculate desirability scorecat3
+    desirability_columns = [
+        'PropertyTypeScoreCat3', 'BathroomDistributionScoreCat3', 'BuildingSizeScoreCat3',
+        'BasementSpaceScoreCat3', 'StoriesCountScoreCat3', 'ZipCodeValueScoreCat3',
+        'LotSizeScoreCat3', 'ConditionScoreCat3', 'YearBuiltScoreCat3'
+    ]
+    
+    properties['DesirabilityScoreCat3'] = properties[desirability_columns].sum(axis=1)
+    
+    # Calculate seller likelihood scorecat3 if we decide to implement those functions
+    
+    # For now, just use DesirabilityScoreCat3 for ranking
+    properties['CombinedScoreCat3'] = properties['DesirabilityScoreCat3']
+    
+    # Assign priority tiers
+    def assign_tier(scorecat3):
+        max_possible = 90  # 15+15+10+10+5+15+10+10+10
+        if scorecat3 >= max_possible * 0.8:  # 80% or higher
+            return "Tier 1"
+        elif scorecat3 >= max_possible * 0.65:  # 65-80%
+            return "Tier 2"
+        elif scorecat3 >= max_possible * 0.5:  # 50-65%
+            return "Tier 3"
+        else:  # Below 50%
+            return "Tier 4"
+    
+    properties['PriorityTier'] = properties['CombinedScoreCat3'].apply(assign_tier)
+    
+    print("ScoreCat3 ranges for each tier:")
+    print("  Tier 1: 72-90")
+    print("  Tier 2: 58.5-71.9")
+    print("  Tier 3: 45-58.4")
+    print("  Tier 4: 0-44.9")
+    
+    return properties
+
+
+# In[15]:
+
+
+# Apply scoring functions to Category 3 properties
+if len(cat3_properties) > 0:
+    # Calculate scorecat3s
+    cat3_properties = calculate_all_scorecat3s(cat3_properties)
+    cat3_properties = calculate_combined_scorecat3s(cat3_properties)
+    
+    # Display scorecat3 summary
+    print("\nScoreCat3 summary statistics:")
+    print(cat3_properties['DesirabilityScoreCat3'].describe())
+    
+    # Count properties by tier
+    print("\nProperties by tier:")
+    tier_counts = cat3_properties['PriorityTier'].value_counts().sort_index()
+    print(tier_counts)
+    
+    # Display top 5 properties
+    display_columns = [
+        'SiteAddr', 'SiteCity', 'SiteZIP', 'BathTtlCt', 'BedCt',
+        'BldgSqFt', 'YrBlt', 'MktTtlVal', 'DesirabilityScoreCat3', 'PriorityTier'
+    ]
+    
+    # Make sure all requested columns exist
+    display_columns = [col for col in display_columns if col in cat3_properties.columns]
+    
+    print("\nTop 5 properties by scorecat3:")
+    top_properties = cat3_properties.sort_values('DesirabilityScoreCat3', ascending=False)
+    display(top_properties[display_columns].head())
+
+
+# ## 11. Save Results
+# 
+# Save the filtered and scorecat3d properties to a CSV file for further analysis.
+
+# In[16]:
+
+
+# Save the results to a CSV file
+if len(cat3_properties) > 0:
+    # Create output directory if it doesn't exist
+    output_dir = './output'
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save to CSV
+    output_file = f"{output_dir}/category3_scorecat3_properties_all.csv"
+    cat3_properties.to_csv(output_file, index=False)
+    print(f"Saved {len(cat3_properties)} scorecat3d properties to {output_file}")
+
+
+# In[ ]:
+
+
+
+
