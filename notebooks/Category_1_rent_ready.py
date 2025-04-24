@@ -333,7 +333,7 @@ if len(cat1_properties) > 0:
 # 
 # Now let's define functions to scorecat1 each property on desirability factors.
 
-# In[33]:
+# In[12]:
 
 
 #========== DESIRABILITY SCORE FUNCTIONS - CATEGORY 1==========
@@ -613,7 +613,7 @@ def calculate_zoning_scorecat1(row):
     return 0  # No zoning information available
 
 
-# In[34]:
+# In[13]:
 
 
 # Test these functions on a sample property to see if they work as expected
@@ -674,17 +674,18 @@ test_desirability_scoring_functions()
 # 
 # Determine seller likelihood for all filtered properties.
 
-# In[35]:
+# In[14]:
 
 
 def calculate_seller_likelihood_score(properties_df):
     """
-    Calculate the likelihood of sellers being willing to sell their Rent-Ready properties.
+    Calculate the likelihood of sellers being willing to sell their properties,
+    regardless of the property's characteristics for any specific buyer category.
     
     Parameters:
     -----------
     properties_df : pandas DataFrame
-        DataFrame containing property information for Category 1 properties
+        DataFrame containing property information
     
     Returns:
     --------
@@ -694,131 +695,97 @@ def calculate_seller_likelihood_score(properties_df):
     # Make a copy of the dataframe to avoid modifying the original
     df = properties_df.copy()
     
-    # Initialize the seller likelihood score column
+    # Initialize the seller likelihood score column and factors description
     df['SellerLikelihoodScore'] = 0
     df['SellerLikelihoodFactors'] = ''
+    
+    # ===== OWNERSHIP FACTORS =====
     
     # Length of ownership - properties owned longer may be more likely to sell
     if 'DocRcrdgDt_County' in df.columns:
         df['OwnershipLength'] = pd.Timestamp.now().year - pd.to_datetime(df['DocRcrdgDt_County']).dt.year
-        # Higher scores for longer ownership (with diminishing returns after 15 years)
-        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodScore'] += 15
-        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodScore'] += 10
-        df.loc[(df['OwnershipLength'] >= 2) & (df['OwnershipLength'] < 7), 'SellerLikelihoodScore'] += 5
         
-        # Add factor description for long ownership
-        df.loc[df['OwnershipLength'] >= 7, 'SellerLikelihoodFactors'] += 'Long-term owner; '
-    
-    # Tax assessment increases - rapidly increasing property taxes may motivate selling
-    if all(col in df.columns for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']):
-        # Convert tax columns to numeric if they aren't already
-        for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']:
-            if df[col].dtype == 'object':
-                df[col] = df[col].str.replace('$', '').str.replace(',', '').astype(float)
+        # Apply scores based on ownership length
+        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodScore'] += 20
+        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodScore'] += 15
+        df.loc[(df['OwnershipLength'] >= 3) & (df['OwnershipLength'] < 7), 'SellerLikelihoodScore'] += 7
         
-        # Calculate year-over-year tax increases
-        df['TaxChange_Recent'] = ((df['TaxTtl1'] - df['TaxTtl2']) / df['TaxTtl2']) * 100
-        df['TaxChange_Previous'] = ((df['TaxTtl2'] - df['TaxTtl3']) / df['TaxTtl3']) * 100
-        
-        # High recent tax increases - more impactful for Category 1 properties due to higher values
-        df.loc[df['TaxChange_Recent'] >= 10, 'SellerLikelihoodScore'] += 12
-        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Recent'] < 10), 'SellerLikelihoodScore'] += 6
-        
-        # Consistent tax increases over multiple years
-        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodScore'] += 5
-        
-        # Add factor description for high tax increases
-        df.loc[df['TaxChange_Recent'] >= 10, 'SellerLikelihoodFactors'] += 'High recent tax increase; '
-        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodFactors'] += 'Sustained tax increases; '
+        # Add factor descriptions
+        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodFactors'] += 'Very long-term owner; '
+        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodFactors'] += 'Long-term owner; '
     
     # Non-owner occupied properties may be more likely to sell
     if 'OwnerOccupiedInd' in df.columns:
-        # For Category 1, investment properties are particularly attractive
-        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodScore'] += 18
+        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodScore'] += 20
         df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodFactors'] += 'Investment property; '
     
     # Corporate ownership might indicate investment property
     if 'OwnerCorporateInd' in df.columns:
-        df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodScore'] += 10
+        df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodScore'] += 15
         df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodFactors'] += 'Corporate owner; '
     
-    # Different tax mailing address may indicate non-local owner
+    # Different mailing address may indicate non-local owner
     if all(col in df.columns for col in ['OwnerAddr', 'SiteAddr']):
         df['DifferentMailingAddr'] = df['OwnerAddr'] != df['SiteAddr']
-        df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodScore'] += 12
+        df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodScore'] += 15
         df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodFactors'] += 'Non-local owner; '
     
-    # Older owners may be more likely to downsize (inferred from ownership length)
+    # ===== FINANCIAL FACTORS =====
+    
+    # Tax assessment increases - rapidly increasing property taxes may motivate selling
+    if all(col in df.columns for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']):
+        # Convert tax columns to numeric if needed
+        for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']:
+            if df[col].dtype == 'object':
+                df[col] = pd.to_numeric(df[col].str.replace(r'[\$,]', '', regex=True), errors='coerce')
+        
+        # Calculate year-over-year tax increases as percentage
+        df['TaxChange_Recent'] = ((df['TaxTtl1'] - df['TaxTtl2']) / df['TaxTtl2'] * 100).fillna(0)
+        df['TaxChange_Previous'] = ((df['TaxTtl2'] - df['TaxTtl3']) / df['TaxTtl3'] * 100).fillna(0)
+        
+        # Score based on tax increases
+        df.loc[df['TaxChange_Recent'] >= 15, 'SellerLikelihoodScore'] += 15
+        df.loc[(df['TaxChange_Recent'] >= 10) & (df['TaxChange_Recent'] < 15), 'SellerLikelihoodScore'] += 10
+        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Recent'] < 10), 'SellerLikelihoodScore'] += 5
+        
+        # Consistent tax increases over multiple years
+        df.loc[(df['TaxChange_Recent'] >= 8) & (df['TaxChange_Previous'] >= 8), 'SellerLikelihoodScore'] += 8
+        
+        # Add factor descriptions
+        df.loc[df['TaxChange_Recent'] >= 15, 'SellerLikelihoodFactors'] += 'Extreme tax increase; '
+        df.loc[(df['TaxChange_Recent'] >= 10) & (df['TaxChange_Recent'] < 15), 'SellerLikelihoodFactors'] += 'Significant tax increase; '
+        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodFactors'] += 'Sustained tax increases; '
+    
+    # Value-to-tax ratio may indicate pressure to sell
+    if all(col in df.columns for col in ['MktTtlVal', 'TaxTtl1']):
+        df['TaxToValueRatio'] = (df['TaxTtl1'] / df['MktTtlVal'] * 100000).fillna(0)
+        
+        df.loc[df['TaxToValueRatio'] > 1.5, 'SellerLikelihoodScore'] += 10
+        df.loc[df['TaxToValueRatio'] > 1.5, 'SellerLikelihoodFactors'] += 'High tax burden relative to value; '
+    
+    # Recent market value changes may impact selling motivation
+    if 'MktTtlVal' in df.columns and 'AssdTtlVal' in df.columns:
+        # Rapidly appreciating property might be attractive to sell
+        df['ValueAssessmentRatio'] = (df['MktTtlVal'] / df['AssdTtlVal']).fillna(1)
+        
+        df.loc[df['ValueAssessmentRatio'] > 1.25, 'SellerLikelihoodScore'] += 10
+        df.loc[df['ValueAssessmentRatio'] > 1.25, 'SellerLikelihoodFactors'] += 'Significant recent appreciation; '
+    
+    # Length of ownership combined with age may indicate life transition
     if 'OwnershipLength' in df.columns:
-        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodScore'] += 5
-        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodFactors'] += 'Potential downsizing candidate; '
+        # Very long ownership might indicate aging owners considering downsizing
+        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodScore'] += 8
+        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodFactors'] += 'Potential life transition; '
     
-    # Rent-Ready specific factors
+    # ===== SCORE NORMALIZATION =====
     
-    # Property condition - For Category 1, condition matters differently
-    if 'Condition' in df.columns:
-        # Lower scores for excellent condition (owners may charge premium rents)
-        df.loc[df['Condition'].str.lower() == 'excellent', 'SellerLikelihoodScore'] += 3
-        # Moderate scores for average condition (balanced investment)
-        df.loc[df['Condition'].str.lower() == 'average', 'SellerLikelihoodScore'] += 8
-        # Higher scores for fair/poor condition (may be challenging to maintain as rentals)
-        df.loc[df['Condition'].str.lower().isin(['fair', 'poor']), 'SellerLikelihoodScore'] += 12
-        
-        df.loc[df['Condition'].str.lower().isin(['fair', 'poor']), 'SellerLikelihoodFactors'] += 'Property may need work (rental upkeep challenges); '
-        df.loc[df['Condition'].str.lower() == 'average', 'SellerLikelihoodFactors'] += 'Balanced condition for rental; '
+    # Calculate the maximum possible score
+    max_possible_score = 121  # Sum of all maximum points from factors above
     
-    # Check for duplex properties - these are already set up as rentals
-    if 'LandUseDsc' in df.columns:
-        # Higher scores for duplexes with non-owner occupation (investment properties)
-        df.loc[(df['LandUseDsc'].str.lower().str.contains('duplex')) & 
-               (df['OwnerOccupiedInd'] == False), 'SellerLikelihoodScore'] += 15
-        df.loc[(df['LandUseDsc'].str.lower().str.contains('duplex')) & 
-               (df['OwnerOccupiedInd'] == False), 'SellerLikelihoodFactors'] += 'Investment duplex; '
-        
-        # Lower scores for owner-occupied duplexes (house hacking situation)
-        df.loc[(df['LandUseDsc'].str.lower().str.contains('duplex')) & 
-               (df['OwnerOccupiedInd'] == True), 'SellerLikelihoodScore'] += 5
-        df.loc[(df['LandUseDsc'].str.lower().str.contains('duplex')) & 
-               (df['OwnerOccupiedInd'] == True), 'SellerLikelihoodFactors'] += 'Owner-occupied duplex; '
-    
-    # Property age considerations
-    if 'YrBlt' in df.columns:
-        # Older properties may have higher maintenance costs for landlords
-        df.loc[df['YrBlt'] < 1960, 'SellerLikelihoodScore'] += 8
-        df.loc[(df['YrBlt'] >= 1960) & (df['YrBlt'] < 1980), 'SellerLikelihoodScore'] += 5
-        
-        df.loc[df['YrBlt'] < 1960, 'SellerLikelihoodFactors'] += 'Older rental (potential maintenance issues); '
-        df.loc[(df['YrBlt'] >= 1960) & (df['YrBlt'] < 1980), 'SellerLikelihoodFactors'] += 'Aging rental property; '
-    
-    # Finished basement likely indicates separate living space
-    if 'BsmtFinSqFt' in df.columns:
-        df.loc[df['BsmtFinSqFt'] > 800, 'SellerLikelihoodScore'] += 8
-        df.loc[df['BsmtFinSqFt'] > 800, 'SellerLikelihoodFactors'] += 'Substantial finished basement (possible rental unit); '
-    
-    # Multiple bathrooms likely indicates separate living spaces
-    if 'BathTtlCt' in df.columns:
-        df.loc[df['BathTtlCt'] >= 3, 'SellerLikelihoodScore'] += 5
-        df.loc[df['BathTtlCt'] >= 3, 'SellerLikelihoodFactors'] += 'Multiple bathrooms for separate units; '
-    
-    # Property value approaching price ceiling for profitable rentals
-    if 'MktTtlVal' in df.columns:
-        df.loc[df['MktTtlVal'] > 750000, 'SellerLikelihoodScore'] += 10
-        df.loc[(df['MktTtlVal'] > 700000) & (df['MktTtlVal'] <= 750000), 'SellerLikelihoodScore'] += 5
-        
-        df.loc[df['MktTtlVal'] > 750000, 'SellerLikelihoodFactors'] += 'Value approaching rental profit threshold; '
-        df.loc[(df['MktTtlVal'] > 700000) & (df['MktTtlVal'] <= 750000), 'SellerLikelihoodFactors'] += 'High value for rental property; '
-    
-    # Property size considerations for rental management
-    if 'LotSqFt' in df.columns:
-        # Very large lots can be maintenance-intensive for landlords
-        df.loc[df['LotSqFt'] > 8000, 'SellerLikelihoodScore'] += 8
-        df.loc[df['LotSqFt'] > 8000, 'SellerLikelihoodFactors'] += 'Large lot (high maintenance for rental); '
-    
-    # Normalize scores to a 0-100 scale
-    max_possible_score = 90  # Based on the maximum score attainable from above factors
+    # Normalize to 0-100 scale
     df['SellerLikelihoodScore'] = (df['SellerLikelihoodScore'] / max_possible_score) * 100
     
-    # Clamp scores to ensure they're between 0 and 100
+    # Ensure scores stay within 0-100 range
     df['SellerLikelihoodScore'] = df['SellerLikelihoodScore'].clip(0, 100)
     
     # Create likelihood categories
@@ -838,7 +805,7 @@ def calculate_seller_likelihood_score(properties_df):
 # 
 # Apply the scoring functions to all filtered properties.
 
-# In[38]:
+# In[15]:
 
 
 def calculate_all_scorecat1s(properties):
@@ -929,7 +896,7 @@ def calculate_combined_scorecat1s(properties):
     return properties
 
 
-# In[39]:
+# In[16]:
 
 
 # Apply scoring functions to Category 1 properties
@@ -963,7 +930,7 @@ if len(cat1_properties) > 0:
 
 # ## 11.  Reorder Results
 
-# In[29]:
+# In[ ]:
 
 
 def reorder_columns(df, category):
@@ -1035,7 +1002,7 @@ def reorder_columns(df, category):
 # 
 # Save the filtered and scorecat1d properties to a CSV file for further analysis.
 
-# In[30]:
+# In[18]:
 
 
 # Save the results to a CSV file

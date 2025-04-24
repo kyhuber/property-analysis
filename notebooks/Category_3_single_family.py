@@ -7,7 +7,7 @@
 # 
 # ## 1. Setup and Imports
 
-# In[19]:
+# In[22]:
 
 
 import pandas as pd
@@ -44,7 +44,7 @@ print(f"Seaborn version: {sns.__version__}")
 # 
 # Load the property data, with an option to test on a small subset first.
 
-# In[20]:
+# In[23]:
 
 
 def load_data(file_path):
@@ -122,7 +122,7 @@ def load_data(file_path):
 # 
 # Define a function to load and clean the property data CSV.
 
-# In[21]:
+# In[24]:
 
 
 # Set path to your data file
@@ -136,28 +136,28 @@ properties = load_data(file_path)
 # 
 # Let's examine the data to understand what we're working with.
 
-# In[22]:
+# In[25]:
 
 
 # Display a few sample rows
 properties.head()
 
 
-# In[23]:
+# In[26]:
 
 
 # Check data types and missing values
 properties.info()
 
 
-# In[24]:
+# In[27]:
 
 
 # Look at statistics for numeric columns
 properties.describe()
 
 
-# In[25]:
+# In[28]:
 
 
 # Check which ZIP codes are present
@@ -166,7 +166,7 @@ if 'SiteZIP' in properties.columns:
     print(properties['SiteZIP'].value_counts())
 
 
-# In[26]:
+# In[29]:
 
 
 # Check distribution of property types
@@ -179,7 +179,7 @@ if 'LandUseDsc' in properties.columns:
 # 
 # Define functions to filter properties based on our criteria.
 
-# In[27]:
+# In[30]:
 
 
 def filter_category3(properties):
@@ -248,7 +248,7 @@ def calculate_zip_averages(properties):
 # 
 # Let's apply the filters and see what properties match our criteria.
 
-# In[28]:
+# In[31]:
 
 
 # Apply Category 3 filters
@@ -284,7 +284,7 @@ if len(cat3_properties) > 0:
 # 
 # Let's visualize some aspects of the filtered properties to better understand them.
 
-# In[29]:
+# In[32]:
 
 
 # Only run if we have matching properties
@@ -337,7 +337,7 @@ if len(cat3_properties) > 0:
 # 
 # Now let's define functions to scorecat3 each property on desirability factors.
 
-# In[30]:
+# In[33]:
 
 
 #========== DESIRABILITY SCORE FUNCTIONS - CATEGORY 3 ==========
@@ -596,7 +596,7 @@ def calculate_garage_scorecat3(row):
         return 0   # No garage
 
 
-# In[31]:
+# In[43]:
 
 
 # Test these functions on a sample property to see if they work as expected
@@ -655,17 +655,18 @@ test_desirability_scoring_functions()
 # 
 # Determine seller likelihood for all filtered properties.
 
-# In[32]:
+# In[47]:
 
 
-def calculate_category3_seller_likelihood(properties_df):
+def calculate_seller_likelihood_score(properties_df):
     """
-    Calculate the likelihood of sellers being willing to sell their Single-Family Residence properties.
+    Calculate the likelihood of sellers being willing to sell their properties,
+    with specific emphasis on factors relevant to single-family residence owners.
     
     Parameters:
     -----------
     properties_df : pandas DataFrame
-        DataFrame containing property information for Category 3 properties
+        DataFrame containing property information
     
     Returns:
     --------
@@ -675,138 +676,116 @@ def calculate_category3_seller_likelihood(properties_df):
     # Make a copy of the dataframe to avoid modifying the original
     df = properties_df.copy()
     
-    # Initialize the seller likelihood score column
+    # Initialize the seller likelihood score column and factors description
     df['SellerLikelihoodScore'] = 0
     df['SellerLikelihoodFactors'] = ''
+
+    # Ensure numeric conversion for key financial columns
+    financial_columns = ['MktTtlVal', 'AssdTtlVal', 'TaxTtl1', 'TaxTtl2', 'TaxTtl3']
+    for col in financial_columns:
+        if col in df.columns:
+            # Remove currency symbols and commas, then convert to numeric
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'[\$,]', '', regex=True), 
+                errors='coerce'
+            )
+    
+    # ===== OWNERSHIP FACTORS =====
     
     # Length of ownership - properties owned longer may be more likely to sell
     if 'DocRcrdgDt_County' in df.columns:
         df['OwnershipLength'] = pd.Timestamp.now().year - pd.to_datetime(df['DocRcrdgDt_County']).dt.year
-        # Higher scores for longer ownership (with diminishing returns after 15 years)
-        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodScore'] += 15
-        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodScore'] += 10
-        df.loc[(df['OwnershipLength'] >= 2) & (df['OwnershipLength'] < 7), 'SellerLikelihoodScore'] += 5
         
-        # Add factor description for long ownership
-        df.loc[df['OwnershipLength'] >= 7, 'SellerLikelihoodFactors'] += 'Long-term owner; '
-    
-    # Tax assessment increases - rapidly increasing property taxes may motivate selling
-    if all(col in df.columns for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']):
-        # Convert tax columns to numeric if they aren't already
-        for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']:
-            if df[col].dtype == 'object':
-                df[col] = df[col].str.replace('$', '').str.replace(',', '').astype(float)
+        # Apply scores based on ownership length
+        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodScore'] += 18
+        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodScore'] += 12
+        df.loc[(df['OwnershipLength'] >= 3) & (df['OwnershipLength'] < 7), 'SellerLikelihoodScore'] += 6
         
-        # Calculate year-over-year tax increases
-        df['TaxChange_Recent'] = ((df['TaxTtl1'] - df['TaxTtl2']) / df['TaxTtl2']) * 100
-        df['TaxChange_Previous'] = ((df['TaxTtl2'] - df['TaxTtl3']) / df['TaxTtl3']) * 100
-        
-        # High recent tax increases
-        df.loc[df['TaxChange_Recent'] >= 10, 'SellerLikelihoodScore'] += 12
-        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Recent'] < 10), 'SellerLikelihoodScore'] += 6
-        
-        # Consistent tax increases over multiple years
-        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodScore'] += 6
-        
-        # Add factor description for high tax increases
-        df.loc[df['TaxChange_Recent'] >= 10, 'SellerLikelihoodFactors'] += 'High recent tax increase; '
-        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodFactors'] += 'Sustained tax increases; '
+        # Add factor descriptions
+        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodFactors'] += 'Very long-term owner; '
+        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodFactors'] += 'Long-term owner; '
     
     # Non-owner occupied properties may be more likely to sell
+    # Higher weight for single-family since most are owner-occupied
     if 'OwnerOccupiedInd' in df.columns:
-        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodScore'] += 15
-        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodFactors'] += 'Investment property; '
+        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodScore'] += 20
+        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodFactors'] += 'Investment property (unusual for category); '
     
     # Corporate ownership might indicate investment property
     if 'OwnerCorporateInd' in df.columns:
-        df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodScore'] += 10
+        df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodScore'] += 15
         df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodFactors'] += 'Corporate owner; '
     
-    # Different tax mailing address may indicate non-local owner
+    # Different mailing address may indicate non-local owner
     if all(col in df.columns for col in ['OwnerAddr', 'SiteAddr']):
         df['DifferentMailingAddr'] = df['OwnerAddr'] != df['SiteAddr']
-        df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodScore'] += 10
+        df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodScore'] += 15
         df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodFactors'] += 'Non-local owner; '
     
-    # Older owners may be more likely to downsize (inferred from ownership length)
+    # ===== FINANCIAL FACTORS =====
+    
+    # Tax assessment increases - important for all categories
+    if all(col in df.columns for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']):
+        # Convert tax columns to numeric if needed
+        for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']:
+            if df[col].dtype == 'object':
+                df[col] = pd.to_numeric(df[col].str.replace(r'[\$,]', '', regex=True), errors='coerce')
+        
+        # Calculate year-over-year tax increases as percentage
+        df['TaxChange_Recent'] = ((df['TaxTtl1'] - df['TaxTtl2']) / df['TaxTtl2'] * 100).fillna(0)
+        df['TaxChange_Previous'] = ((df['TaxTtl2'] - df['TaxTtl3']) / df['TaxTtl3'] * 100).fillna(0)
+        
+        # Score based on tax increases (may impact owner-occupiers more)
+        df.loc[df['TaxChange_Recent'] >= 15, 'SellerLikelihoodScore'] += 15
+        df.loc[(df['TaxChange_Recent'] >= 10) & (df['TaxChange_Recent'] < 15), 'SellerLikelihoodScore'] += 10
+        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Recent'] < 10), 'SellerLikelihoodScore'] += 5
+        
+        # Consistent tax increases over multiple years
+        df.loc[(df['TaxChange_Recent'] >= 8) & (df['TaxChange_Previous'] >= 8), 'SellerLikelihoodScore'] += 7
+        
+        # Add factor descriptions
+        df.loc[df['TaxChange_Recent'] >= 15, 'SellerLikelihoodFactors'] += 'Extreme tax increase; '
+        df.loc[(df['TaxChange_Recent'] >= 10) & (df['TaxChange_Recent'] < 15), 'SellerLikelihoodFactors'] += 'Significant tax increase; '
+        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodFactors'] += 'Sustained tax increases; '
+    
+    # Value-to-tax ratio may indicate pressure to sell
+    if all(col in df.columns for col in ['MktTtlVal', 'TaxTtl1']):
+        df['TaxToValueRatio'] = (df['TaxTtl1'] / df['MktTtlVal'] * 100000).fillna(0)
+        
+        df.loc[df['TaxToValueRatio'] > 1.5, 'SellerLikelihoodScore'] += 8
+        df.loc[df['TaxToValueRatio'] > 1.5, 'SellerLikelihoodFactors'] += 'High tax burden relative to value; '
+    
+    # Recent market value changes may impact selling motivation
+        if 'MktTtlVal' in df.columns and 'AssdTtlVal' in df.columns:
+            # Safely calculate value assessment ratio
+            df['ValueAssessmentRatio'] = df.apply(
+                lambda row: row['MktTtlVal'] / row['AssdTtlVal'] if row['AssdTtlVal'] > 0 else 1, 
+                axis=1
+            )
+            
+            df.loc[df['ValueAssessmentRatio'] > 1.25, 'SellerLikelihoodScore'] += 12
+            df.loc[df['ValueAssessmentRatio'] > 1.25, 'SellerLikelihoodFactors'] += 'Significant recent appreciation; '
+    
+    # Length of ownership combined with age may indicate life transition
     if 'OwnershipLength' in df.columns:
-        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodScore'] += 5
-        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodFactors'] += 'Potential downsizing candidate; '
-    
-    # Category 3 (Single-Family) specific factors
-    
-    # Properties with smaller dimensions that might be outgrown
-    if 'BldgSqFt' in df.columns:
-        df.loc[df['BldgSqFt'] < 1200, 'SellerLikelihoodScore'] += 10
-        df.loc[(df['BldgSqFt'] >= 1200) & (df['BldgSqFt'] < 1500), 'SellerLikelihoodScore'] += 6
+        # Very long ownership might indicate aging owners considering downsizing
+        # Higher in single-family homes where this is more common
+        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodScore'] += 12
+        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodFactors'] += 'Potential life transition/downsizing; '
         
-        df.loc[df['BldgSqFt'] < 1200, 'SellerLikelihoodFactors'] += 'Small family home; '
-        df.loc[(df['BldgSqFt'] >= 1200) & (df['BldgSqFt'] < 1500), 'SellerLikelihoodFactors'] += 'Modest-sized home; '
+        # Mid-length ownership might indicate growing families needing more space
+        df.loc[(df['OwnershipLength'] >= 5) & (df['OwnershipLength'] < 10), 'SellerLikelihoodScore'] += 8
+        df.loc[(df['OwnershipLength'] >= 5) & (df['OwnershipLength'] < 10), 'SellerLikelihoodFactors'] += 'Potential family growth/upsizing; '
     
-    # Properties with small bedrooms for growing families
-    if 'BldgSqFt' in df.columns and 'BedCt' in df.columns:
-        df['SqFtPerBedroom'] = df['BldgSqFt'] / df['BedCt']
-        df.loc[df['SqFtPerBedroom'] < 400, 'SellerLikelihoodScore'] += 8
-        df.loc[df['SqFtPerBedroom'] < 400, 'SellerLikelihoodFactors'] += 'Small bedrooms; '
+    # ===== SCORE NORMALIZATION =====
     
-    # Families might outgrow homes with limited bathrooms
-    if 'BathTtlCt' in df.columns and 'BedCt' in df.columns:
-        df.loc[(df['BathTtlCt'] <= 1.5) & (df['BedCt'] >= 3), 'SellerLikelihoodScore'] += 8
-        df.loc[(df['BathTtlCt'] <= 1.5) & (df['BedCt'] >= 3), 'SellerLikelihoodFactors'] += 'Bathroom-to-bedroom imbalance; '
+    # Calculate the maximum possible score
+    max_possible_score = 122  # Sum of all maximum points from factors above
     
-    # Properties with deferred maintenance
-    if 'Condition' in df.columns:
-        df.loc[df['Condition'].str.lower().isin(['poor', 'fair']), 'SellerLikelihoodScore'] += 12
-        df.loc[df['Condition'].str.lower() == 'average', 'SellerLikelihoodScore'] += 6
-        
-        df.loc[df['Condition'].str.lower().isin(['poor', 'fair']), 'SellerLikelihoodFactors'] += 'Property needs significant work; '
-        df.loc[df['Condition'].str.lower() == 'average', 'SellerLikelihoodFactors'] += 'May need updates; '
-    
-    # Lower-priced properties in desirable/appreciating areas
-    if 'MktTtlVal' in df.columns and 'SiteZIP' in df.columns:
-        appreciating_zips = ['98116', '98136']  # Example appreciating zip codes
-        df.loc[(df['SiteZIP'].isin(appreciating_zips)) & 
-               (df['MktTtlVal'] <= 550000), 
-               'SellerLikelihoodScore'] += 12
-        df.loc[(df['SiteZIP'].isin(appreciating_zips)) & 
-               (df['MktTtlVal'] > 550000) & (df['MktTtlVal'] <= 600000), 
-               'SellerLikelihoodScore'] += 8
-        
-        df.loc[(df['SiteZIP'].isin(appreciating_zips)) & 
-               (df['MktTtlVal'] <= 550000), 
-               'SellerLikelihoodFactors'] += 'Well below market for neighborhood; '
-        df.loc[(df['SiteZIP'].isin(appreciating_zips)) & 
-               (df['MktTtlVal'] > 550000) & (df['MktTtlVal'] <= 600000), 
-               'SellerLikelihoodFactors'] += 'Below market for neighborhood; '
-    
-    # Properties with larger lots that require more maintenance
-    if 'LotSqFt' in df.columns:
-        df.loc[df['LotSqFt'] > 7000, 'SellerLikelihoodScore'] += 7
-        df.loc[df['LotSqFt'] > 7000, 'SellerLikelihoodFactors'] += 'Large lot (maintenance burden); '
-    
-    # Older properties that might require more upkeep
-    if 'YrBlt' in df.columns:
-        df.loc[df['YrBlt'] < 1950, 'SellerLikelihoodScore'] += 10
-        df.loc[(df['YrBlt'] >= 1950) & (df['YrBlt'] < 1970), 'SellerLikelihoodScore'] += 6
-        
-        df.loc[df['YrBlt'] < 1950, 'SellerLikelihoodFactors'] += 'Pre-1950s home (potential maintenance issues); '
-        df.loc[(df['YrBlt'] >= 1950) & (df['YrBlt'] < 1970), 'SellerLikelihoodFactors'] += 'Older home (potential updates needed); '
-    
-    # Properties with no garage in areas where garages are common
-    if 'GarageDsc' in df.columns:
-        df.loc[df['GarageDsc'].isna() | (df['GarageDsc'] == ''), 'SellerLikelihoodScore'] += 6
-        df.loc[df['GarageDsc'].isna() | (df['GarageDsc'] == ''), 'SellerLikelihoodFactors'] += 'No garage; '
-    
-    # Properties with less desirable heating systems
-    if 'HeatType' in df.columns:
-        df.loc[df['HeatType'].str.lower().isin(['wall', 'baseboard', 'radiator']), 'SellerLikelihoodScore'] += 5
-        df.loc[df['HeatType'].str.lower().isin(['wall', 'baseboard', 'radiator']), 'SellerLikelihoodFactors'] += 'Outdated heating system; '
-    
-    # Normalize scores to a 0-100 scale
-    max_possible_score = 90  # Based on the maximum score attainable from above factors
+    # Normalize to 0-100 scale
     df['SellerLikelihoodScore'] = (df['SellerLikelihoodScore'] / max_possible_score) * 100
     
-    # Clamp scores to ensure they're between 0 and 100
+    # Ensure scores stay within 0-100 range
     df['SellerLikelihoodScore'] = df['SellerLikelihoodScore'].clip(0, 100)
     
     # Create likelihood categories
@@ -826,7 +805,7 @@ def calculate_category3_seller_likelihood(properties_df):
 # 
 # Apply the scoring functions to all filtered properties.
 
-# In[33]:
+# In[48]:
 
 
 def calculate_all_scorecat3s(properties):
@@ -877,7 +856,7 @@ def calculate_combined_scorecat3s(properties):
     properties['DesirabilityScoreCat3'] = properties[desirability_columns].sum(axis=1)
     
     # Calculate seller likelihood score
-    properties = calculate_category3_seller_likelihood(properties)
+    properties = calculate_seller_likelihood_score(properties)
     
     # Calculate final combined score (weighted average)
     properties['FinalScoreCat3'] = (
@@ -917,7 +896,7 @@ def calculate_combined_scorecat3s(properties):
     return properties
 
 
-# In[34]:
+# In[49]:
 
 
 # Apply scoring functions to Category 3 properties
@@ -951,13 +930,8 @@ if len(cat3_properties) > 0:
 
 # ## 11.  Reorder Results
 
-# In[35]:
+# In[50]:
 
-
-import pandas as pd
-
-# Assuming you already have your DataFrame loaded with the property data and scores
-# For example: df = pd.read_csv('properties_with_scores.csv')
 
 def reorder_columns(df, category):
     """
@@ -1036,7 +1010,7 @@ def reorder_columns(df, category):
 # 
 # Save the filtered and scorecat3d properties to a CSV file for further analysis.
 
-# In[36]:
+# In[51]:
 
 
 # Save the results to a CSV file

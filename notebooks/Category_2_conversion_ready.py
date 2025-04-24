@@ -7,7 +7,7 @@
 # 
 # ## 1. Setup and Imports
 
-# In[1]:
+# In[21]:
 
 
 import pandas as pd
@@ -44,7 +44,7 @@ print(f"Seaborn version: {sns.__version__}")
 # 
 # Load the property data, with an option to test on a small subset first.
 
-# In[2]:
+# In[22]:
 
 
 def load_data(file_path):
@@ -122,7 +122,7 @@ def load_data(file_path):
 # 
 # Define a function to load and clean the property data CSV.
 
-# In[3]:
+# In[23]:
 
 
 # Set path to your data file
@@ -136,28 +136,28 @@ properties = load_data(file_path)
 # 
 # Let's examine the data to understand what we're working with.
 
-# In[4]:
+# In[24]:
 
 
 # Display a few sample rows
 properties.head()
 
 
-# In[5]:
+# In[25]:
 
 
 # Check data types and missing values
 properties.info()
 
 
-# In[6]:
+# In[26]:
 
 
 # Look at statistics for numeric columns
 properties.describe()
 
 
-# In[7]:
+# In[27]:
 
 
 # Check which ZIP codes are present
@@ -166,7 +166,7 @@ if 'SiteZIP' in properties.columns:
     print(properties['SiteZIP'].value_counts())
 
 
-# In[8]:
+# In[28]:
 
 
 # Check distribution of property types
@@ -179,7 +179,7 @@ if 'LandUseDsc' in properties.columns:
 # 
 # Define functions to filter properties based on our criteria.
 
-# In[9]:
+# In[29]:
 
 
 def filter_category2(properties):
@@ -252,7 +252,7 @@ def calculate_zip_averages(properties):
 # 
 # Let's apply the filters and see what properties match our criteria.
 
-# In[10]:
+# In[30]:
 
 
 # Apply Category 2 filters
@@ -288,7 +288,7 @@ if len(cat2_properties) > 0:
 # 
 # Let's visualize some aspects of the filtered properties to better understand them.
 
-# In[11]:
+# In[31]:
 
 
 # Only run if we have matching properties
@@ -341,7 +341,7 @@ if len(cat2_properties) > 0:
 # 
 # Now let's define functions to scorecat2 each property on desirability factors.
 
-# In[12]:
+# In[32]:
 
 
 #========== DESIRABILITY SCORE FUNCTIONS - CATEGORY 2==========
@@ -628,7 +628,7 @@ def calculate_zoning_scorecat2(row):
     return 0  # No zoning information available
 
 
-# In[13]:
+# In[33]:
 
 
 # Test these functions on a sample property to see if they work as expected
@@ -690,376 +690,146 @@ test_desirability_scoring_functions()
 # 
 # Determine seller likelihood for all filtered properties.
 
-# In[14]:
+# In[43]:
 
-
-def calculate_ownership_duration_score(row):
-    """
-    Calculate score based on how long the current owner has owned the property
-    Max score: 20 points
-    """
-    if not pd.notna(row['DocRcrdgDt_County']):
-        return 0
-    
-    purchase_date = row['DocRcrdgDt_County']
-    current_date = pd.Timestamp.now()
-    ownership_years = (current_date - purchase_date).days / 365
-    
-    if ownership_years >= 10:
-        return 20
-    elif ownership_years >= 7:
-        return 15
-    elif ownership_years >= 5:
-        return 10
-    elif ownership_years >= 3:
-        return 5
-    else:
-        return 0
-
-def calculate_owner_occupied_score(row):
-    """
-    Calculate score based on whether property is owner-occupied
-    Max score: 15 points
-    """
-    if pd.notna(row['OwnerOccupiedInd']) and row['OwnerOccupiedInd'] == False:
-        return 15
-    else:
-        return 0
-
-def calculate_corporate_ownership_score(row):
-    """
-    Calculate score based on corporate ownership
-    Max score: 10 points
-    """
-    if pd.notna(row['OwnerCorporateInd']) and row['OwnerCorporateInd'] == True:
-        return 10
-    else:
-        return 0
-
-def calculate_tax_trend_score(row):
-    """
-    Calculate score based on tax increase trend
-    Max score: 15 points
-    """
-    tax1 = row['TaxTtl1'] if pd.notna(row['TaxTtl1']) else 0
-    tax2 = row['TaxTtl2'] if pd.notna(row['TaxTtl2']) else 0
-    tax3 = row['TaxTtl3'] if pd.notna(row['TaxTtl3']) else 0
-    
-    # If we don't have enough data, return middle score
-    if tax2 == 0 or tax3 == 0:
-        return 5
-    
-    # Calculate average annual increase percentage
-    increase1 = (tax1 - tax2) / tax2 * 100 if tax2 > 0 else 0
-    increase2 = (tax2 - tax3) / tax3 * 100 if tax3 > 0 else 0
-    avg_increase = (increase1 + increase2) / 2
-    
-    if avg_increase > 10:
-        return 15
-    elif avg_increase >= 5:
-        return 10
-    elif avg_increase >= 2:
-        return 5
-    else:
-        return 0
-
-def calculate_value_tax_ratio_score(row):
-    """
-    Calculate score based on tax to value ratio
-    Max score: 10 points
-    """
-    tax = row['TaxTtl1'] if pd.notna(row['TaxTtl1']) else 0
-    value = row['MktTtlVal'] if pd.notna(row['MktTtlVal']) else 0
-    
-    if value == 0:
-        return 0
-    
-    ratio = tax / value * 100000  # Scaled for better comparison
-    
-    if ratio > 1.5:
-        return 10
-    elif ratio >= 1.2:
-        return 7
-    elif ratio >= 0.9:
-        return 3
-    else:
-        return 0
-
-def calculate_condition_vs_neighborhood_score(row, properties_df):
-    """
-    Calculate score based on property condition vs neighborhood average
-    Max score: 15 points
-    """
-    if not pd.notna(row['Condition']) or not pd.notna(row['SiteZIP']):
-        return 5  # Middle score if we don't have data
-    
-    # Map condition to numeric value
-    condition_map = {
-        'excellent': 5,
-        'good': 4,
-        'average': 3,
-        'fair': 2,
-        'poor': 1
-    }
-    
-    property_condition = condition_map.get(str(row['Condition']).lower(), 3)
-    
-    # Calculate average condition for this ZIP code
-    zip_properties = properties_df[properties_df['SiteZIP'] == row['SiteZIP']]
-    zip_conditions = zip_properties['Condition'].apply(
-        lambda x: condition_map.get(str(x).lower(), 3) if pd.notna(x) else 3
-    )
-    avg_condition = zip_conditions.mean() if len(zip_conditions) > 0 else 3
-    
-    if property_condition < avg_condition - 0.5:
-        return 15
-    elif abs(property_condition - avg_condition) <= 0.5:
-        return 5
-    else:
-        return 0
-
-def calculate_property_age_score(row):
-    """
-    Calculate score based on property age
-    Max score: 10 points
-    """
-    if not pd.notna(row['YrBlt']):
-        return 5  # Middle score if we don't have data
-    
-    year_built = row['YrBlt']
-    
-    if year_built < 1950:
-        return 10
-    elif year_built < 1970:
-        return 7
-    elif year_built < 1990:
-        return 3
-    else:
-        return 0
-
-def calculate_value_vs_zip_average_score(row, zip_averages_df):
-    """
-    Calculate score based on property value vs ZIP code average
-    Max score: 15 points
-    """
-    if not pd.notna(row['MktTtlVal']) or not pd.notna(row['SiteZIP']):
-        return 5  # Middle score if we don't have data
-    
-    property_value = row['MktTtlVal']
-    
-    # Get average value for this ZIP
-    zip_avg = zip_averages_df.loc[
-        zip_averages_df['SiteZIP'] == row['SiteZIP'], 
-        'ZipAvgValue'
-    ].values[0] if row['SiteZIP'] in zip_averages_df['SiteZIP'].values else property_value
-    
-    # Calculate percentage difference
-    pct_diff = (zip_avg - property_value) / zip_avg * 100
-    
-    if pct_diff > 20:
-        return 15
-    elif pct_diff >= 10:
-        return 10
-    elif pct_diff >= -10:
-        return 5
-    else:
-        return 0
 
 def calculate_seller_likelihood_score(properties_df):
     """
-    Calculate total seller likelihood score
+    Calculate the likelihood of sellers being willing to sell their properties,
+    with specific emphasis on factors relevant to conversion-ready property owners.
+    
+    Parameters:
+    -----------
+    properties_df : pandas DataFrame
+        DataFrame containing property information
+    
+    Returns:
+    --------
+    pandas DataFrame
+        Original DataFrame with added seller likelihood score and factors
     """
-    # Calculate ZIP code averages once
-    zip_averages = properties_df.groupby('SiteZIP')['MktTtlVal'].mean().reset_index()
-    zip_averages.rename(columns={'MktTtlVal': 'ZipAvgValue'}, inplace=True)
+    # Make a copy of the dataframe to avoid modifying the original
+    df = properties_df.copy()
     
-    # Apply individual scoring functions
-    properties_df['OwnershipDurationScore'] = properties_df.apply(
-        calculate_ownership_duration_score, axis=1
-    )
+    # Initialize the seller likelihood score column and factors description
+    df['SellerLikelihoodScore'] = 0
+    df['SellerLikelihoodFactors'] = ''
     
-    properties_df['OwnerOccupiedScore'] = properties_df.apply(
-        calculate_owner_occupied_score, axis=1
-    )
+    # Ensure numeric conversion for key financial columns
+    financial_columns = ['MktTtlVal', 'AssdTtlVal', 'TaxTtl1', 'TaxTtl2', 'TaxTtl3']
+    for col in financial_columns:
+        if col in df.columns:
+            # Remove currency symbols and commas, then convert to numeric
+            df[col] = pd.to_numeric(
+                df[col].astype(str).str.replace(r'[\$,]', '', regex=True), 
+                errors='coerce'
+            )
     
-    properties_df['CorporateOwnershipScore'] = properties_df.apply(
-        calculate_corporate_ownership_score, axis=1
-    )
+    # ===== OWNERSHIP FACTORS =====
     
-    properties_df['TaxTrendScore'] = properties_df.apply(
-        calculate_tax_trend_score, axis=1
-    )
-    
-    properties_df['ValueTaxRatioScore'] = properties_df.apply(
-        calculate_value_tax_ratio_score, axis=1
-    )
-    
-    properties_df['ConditionVsNeighborhoodScore'] = properties_df.apply(
-        lambda row: calculate_condition_vs_neighborhood_score(row, properties_df), axis=1
-    )
-    
-    properties_df['PropertyAgeScore'] = properties_df.apply(
-        calculate_property_age_score, axis=1
-    )
-    
-    properties_df['ValueVsZipAverageScore'] = properties_df.apply(
-        lambda row: calculate_value_vs_zip_average_score(row, zip_averages), axis=1
-    )
-    
-    # Calculate total seller likelihood score
-    score_columns = [
-        'OwnershipDurationScore', 'OwnerOccupiedScore', 'CorporateOwnershipScore',
-        'TaxTrendScore', 'ValueTaxRatioScore', 'ConditionVsNeighborhoodScore',
-        'PropertyAgeScore', 'ValueVsZipAverageScore'
-    ]
-    
-    properties_df['SellerLikelihoodScore'] = properties_df[score_columns].sum(axis=1)
-  
-    # Assign seller likelihood tiers
-    def assign_seller_tier(score):
-        max_possible = 110  # Total possible points
-        if score >= max_possible * 0.75:  # 75% or higher
-            return "Very Likely"
-        elif score >= max_possible * 0.5:  # 50-75%
-            return "Somewhat Likely"
-        elif score >= max_possible * 0.25:  # 25-50%
-            return "Somewhat Unlikely"
-        else:  # Below 25%
-            return "Very Unlikely"
-    
-    properties_df['SellerLikelihoodTier'] = properties_df['SellerLikelihoodScore'].apply(assign_seller_tier)
-    
-    return properties_df
-
-
-# In[15]:
-
-
-def test_seller_likelihood_scoring_functions():
-    """
-    Test the seller likelihood scoring functions on a sample property
-    to ensure they're working correctly.
-    """
-    # Create a sample property for testing
-    sample_property = pd.Series({
-        # Basic property info
-        'SiteAddr': '123 Main St',
-        'SiteCity': 'Seattle',
-        'SiteZIP': '98126',
-        'MktTtlVal': 725000,
+    # Length of ownership - properties owned longer may be more likely to sell
+    if 'DocRcrdgDt_County' in df.columns:
+        df['OwnershipLength'] = pd.Timestamp.now().year - pd.to_datetime(df['DocRcrdgDt_County'], errors='coerce').dt.year
         
-        # Owner information
-        'OwnerOccupiedInd': False,
-        'OwnerCorporateInd': True,
+        # Apply scores based on ownership length (higher for conversion-ready)
+        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodScore'] += 20
+        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodScore'] += 15
+        df.loc[(df['OwnershipLength'] >= 3) & (df['OwnershipLength'] < 7), 'SellerLikelihoodScore'] += 7
         
-        # Purchase history
-        'DocRcrdgDt_County': pd.Timestamp('2011-05-15'),
+        # Add factor descriptions
+        df.loc[df['OwnershipLength'] >= 15, 'SellerLikelihoodFactors'] += 'Very long-term owner; '
+        df.loc[(df['OwnershipLength'] >= 7) & (df['OwnershipLength'] < 15), 'SellerLikelihoodFactors'] += 'Long-term owner; '
+    
+    # Non-owner occupied properties may be more likely to sell
+    if 'OwnerOccupiedInd' in df.columns:
+        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodScore'] += 15
+        df.loc[df['OwnerOccupiedInd'] == False, 'SellerLikelihoodFactors'] += 'Investment property; '
+    
+    # Corporate ownership might indicate investment property
+    if 'OwnerCorporateInd' in df.columns:
+        df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodScore'] += 12
+        df.loc[df['OwnerCorporateInd'] == True, 'SellerLikelihoodFactors'] += 'Corporate owner; '
+    
+    # Different mailing address may indicate non-local owner
+    if all(col in df.columns for col in ['OwnerAddr', 'SiteAddr']):
+        df['DifferentMailingAddr'] = df['OwnerAddr'] != df['SiteAddr']
+        df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodScore'] += 12
+        df.loc[df['DifferentMailingAddr'], 'SellerLikelihoodFactors'] += 'Non-local owner; '
+    
+    # ===== FINANCIAL FACTORS =====
+    
+    # Tax assessment increases - particularly important for conversion-ready properties
+    if all(col in df.columns for col in ['TaxTtl1', 'TaxTtl2', 'TaxTtl3']):
+        # Calculate year-over-year tax increases as percentage
+        df['TaxChange_Recent'] = ((df['TaxTtl1'] - df['TaxTtl2']) / df['TaxTtl2'] * 100).fillna(0)
+        df['TaxChange_Previous'] = ((df['TaxTtl2'] - df['TaxTtl3']) / df['TaxTtl3'] * 100).fillna(0)
         
-        # Tax information
-        'TaxTtl1': 9500,    # Current year taxes
-        'TaxTtl2': 8200,    # Previous year taxes
-        'TaxTtl3': 7500,    # Two years ago taxes
+        # Score based on tax increases (higher weight for conversion-ready)
+        df.loc[df['TaxChange_Recent'] >= 15, 'SellerLikelihoodScore'] += 18
+        df.loc[(df['TaxChange_Recent'] >= 10) & (df['TaxChange_Recent'] < 15), 'SellerLikelihoodScore'] += 12
+        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Recent'] < 10), 'SellerLikelihoodScore'] += 6
         
-        # Property characteristics
-        'Condition': 'Fair',
-        'YrBlt': 1965
-    })
+        # Consistent tax increases over multiple years
+        df.loc[(df['TaxChange_Recent'] >= 8) & (df['TaxChange_Previous'] >= 8), 'SellerLikelihoodScore'] += 10
+        
+        # Add factor descriptions
+        df.loc[df['TaxChange_Recent'] >= 15, 'SellerLikelihoodFactors'] += 'Extreme tax increase; '
+        df.loc[(df['TaxChange_Recent'] >= 10) & (df['TaxChange_Recent'] < 15), 'SellerLikelihoodFactors'] += 'Significant tax increase; '
+        df.loc[(df['TaxChange_Recent'] >= 5) & (df['TaxChange_Previous'] >= 5), 'SellerLikelihoodFactors'] += 'Sustained tax increases; '
     
-    # Create a small dataframe with the sample property and some other properties
-    # to test neighborhood comparisons
-    other_properties = [
-        # Another property in same ZIP with better condition
-        pd.Series({
-            'SiteZIP': '98126',
-            'Condition': 'Good',
-            'MktTtlVal': 750000
-        }),
-        # Another property in same ZIP with average condition
-        pd.Series({
-            'SiteZIP': '98126',
-            'Condition': 'Average', 
-            'MktTtlVal': 735000
-        })
-    ]
+    # Value-to-tax ratio may indicate pressure to sell
+    if all(col in df.columns for col in ['MktTtlVal', 'TaxTtl1']):
+        df['TaxToValueRatio'] = (df['TaxTtl1'] / df['MktTtlVal'] * 100000).fillna(0)
+        
+        df.loc[df['TaxToValueRatio'] > 1.5, 'SellerLikelihoodScore'] += 10
+        df.loc[df['TaxToValueRatio'] > 1.5, 'SellerLikelihoodFactors'] += 'High tax burden relative to value; '
     
-    # Combine into a dataframe
-    test_df = pd.DataFrame([sample_property] + other_properties)
+    # Recent market value changes may impact selling motivation
+    if 'MktTtlVal' in df.columns and 'AssdTtlVal' in df.columns:
+        # Safely calculate value assessment ratio
+        df['ValueAssessmentRatio'] = df.apply(
+            lambda row: row['MktTtlVal'] / row['AssdTtlVal'] if row['AssdTtlVal'] > 0 else 1, 
+            axis=1
+        )
+        
+        df.loc[df['ValueAssessmentRatio'] > 1.25, 'SellerLikelihoodScore'] += 12
+        df.loc[df['ValueAssessmentRatio'] > 1.25, 'SellerLikelihoodFactors'] += 'Significant recent appreciation; '
     
-    # Create ZIP averages dataframe
-    zip_averages = pd.DataFrame({
-        'SiteZIP': ['98126', '98116'],
-        'ZipAvgValue': [742500, 850000]
-    })
+    # Length of ownership combined with age may indicate life transition
+    if 'OwnershipLength' in df.columns:
+        # Very long ownership might indicate aging owners considering downsizing
+        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodScore'] += 8
+        df.loc[df['OwnershipLength'] >= 25, 'SellerLikelihoodFactors'] += 'Potential life transition; '
     
-    # Test each scoring function individually
-    print("Testing seller likelihood scoring functions on sample property...")
+    # ===== SCORE NORMALIZATION =====
     
-    # Test ownership duration score
-    ownership_score = calculate_ownership_duration_score(sample_property)
-    print(f"Ownership Duration Score: {ownership_score} (Expected: 20 for ~14 years ownership)")
+    # Calculate the maximum possible score
+    max_possible_score = 117  # Sum of all maximum points from factors above
     
-    # Test owner occupied score
-    occupied_score = calculate_owner_occupied_score(sample_property)
-    print(f"Owner Occupied Score: {occupied_score} (Expected: 15 for non-owner occupied)")
+    # Normalize to 0-100 scale
+    df['SellerLikelihoodScore'] = (df['SellerLikelihoodScore'] / max_possible_score) * 100
     
-    # Test corporate ownership score
-    corporate_score = calculate_corporate_ownership_score(sample_property)
-    print(f"Corporate Ownership Score: {corporate_score} (Expected: 10 for corporate owned)")
+    # Ensure scores stay within 0-100 range
+    df['SellerLikelihoodScore'] = df['SellerLikelihoodScore'].clip(0, 100)
     
-    # Test tax trend score
-    tax_score = calculate_tax_trend_score(sample_property)
-    print(f"Tax Trend Score: {tax_score} (Expected: 10-15 for ~15% annual increase)")
-    
-    # Test value-tax ratio score
-    value_tax_score = calculate_value_tax_ratio_score(sample_property)
-    print(f"Value-Tax Ratio Score: {value_tax_score} (Expected: ~7 for ratio of ~1.3)")
-    
-    # Test condition vs neighborhood score
-    condition_score = calculate_condition_vs_neighborhood_score(sample_property, test_df)
-    print(f"Condition vs Neighborhood Score: {condition_score} (Expected: 15 for worse than neighborhood)")
-    
-    # Test property age score
-    age_score = calculate_property_age_score(sample_property)
-    print(f"Property Age Score: {age_score} (Expected: 7 for built in 1965)")
-    
-    # Test value vs ZIP average score
-    value_zip_score = calculate_value_vs_zip_average_score(sample_property, zip_averages)
-    print(f"Value vs ZIP Average Score: {value_zip_score} (Expected: 5 for within 10% of ZIP average)")
-    
-    # Calculate total seller likelihood score
-    total_score = (
-        ownership_score + occupied_score + corporate_score + tax_score +
-        value_tax_score + condition_score + age_score + value_zip_score
+    # Create likelihood categories
+    df['SellerLikelihoodCategory'] = pd.cut(
+        df['SellerLikelihoodScore'], 
+        bins=[0, 25, 50, 75, 100], 
+        labels=['Low', 'Moderate', 'High', 'Very High']
     )
     
-    # Determine max possible score
-    max_possible = 110  # 20+15+10+15+10+15+10+15
+    # Clean up factors string (remove trailing semicolon and space)
+    df['SellerLikelihoodFactors'] = df['SellerLikelihoodFactors'].str.rstrip('; ')
     
-    # Determine seller likelihood tier
-    if total_score >= max_possible * 0.75:
-        tier = "Very Likely"
-    elif total_score >= max_possible * 0.5:
-        tier = "Somewhat Likely"
-    elif total_score >= max_possible * 0.25:
-        tier = "Somewhat Unlikely"
-    else:
-        tier = "Very Unlikely"
-    
-    print(f"\nTotal Seller Likelihood Score: {total_score} (out of {max_possible} possible points)")
-    print(f"Seller Likelihood Tier: {tier}")
-    
-    # Return total score for reference
-    return total_score
-
-# Run the test
-test_score = test_seller_likelihood_scoring_functions()
+    return df
 
 
 # ## 10. Calculate ScoreCat2s for All Properties
 # 
 # Apply the scoring functions to all filtered properties.
 
-# In[16]:
+# In[44]:
 
 
 def calculate_all_scorecat2s(properties):
@@ -1074,22 +844,18 @@ def calculate_all_scorecat2s(properties):
     """
     # Calculate desirability scorecat2s
     print("Calculating desirability scorecat2s...")
-    properties['PropertyTypeScoreCat2'] = properties.apply(calculate_property_type_scorecat2, axis=1)
-    properties['BathroomDistributionScoreCat2'] = properties.apply(calculate_bathroom_distribution_scorecat2, axis=1)
-    properties['BuildingSizeScoreCat2'] = properties.apply(calculate_building_size_scorecat2, axis=1)
-    properties['BasementSpaceScoreCat2'] = properties.apply(calculate_basement_space_scorecat2, axis=1)
-    properties['StoriesCountScoreCat2'] = properties.apply(calculate_stories_count_scorecat2, axis=1)
-    properties['ZipCodeValueScoreCat2'] = properties.apply(calculate_zip_code_value_scorecat2, axis=1)
-    properties['LotSizeScoreCat2'] = properties.apply(calculate_lot_size_scorecat2, axis=1)
-    properties['ConditionScoreCat2'] = properties.apply(calculate_condition_scorecat2, axis=1)
-    properties['YearBuiltScoreCat2'] = properties.apply(calculate_year_built_scorecat2, axis=1)
-    properties['ZoningScoreCat2'] = properties.apply(calculate_zoning_scorecat2, axis=1)
+    properties['PropertyTypeScorecat2'] = properties.apply(calculate_property_type_scorecat2, axis=1)
+    properties['BathroomDistributionScorecat2'] = properties.apply(calculate_bathroom_distribution_scorecat2, axis=1)
+    properties['BuildingSizeScorecat2'] = properties.apply(calculate_building_size_scorecat2, axis=1)
+    properties['BasementSpaceScorecat2'] = properties.apply(calculate_basement_space_scorecat2, axis=1)
+    properties['StoriesCountScorecat2'] = properties.apply(calculate_stories_count_scorecat2, axis=1)
+    properties['ZipCodeValueScorecat2'] = properties.apply(calculate_zip_code_value_scorecat2, axis=1)
+    properties['LotSizeScorecat2'] = properties.apply(calculate_lot_size_scorecat2, axis=1)
+    properties['ConditionScorecat2'] = properties.apply(calculate_condition_scorecat2, axis=1)
+    properties['YearBuiltScorecat2'] = properties.apply(calculate_year_built_scorecat2, axis=1)
     
     return properties
-
-
-
-
+    
 def calculate_combined_scorecat2s(properties):
     """
     Calculate total and combined scores, and assign priority tiers
@@ -1109,10 +875,18 @@ def calculate_combined_scorecat2s(properties):
     
     properties['DesirabilityScoreCat2'] = properties[desirability_columns].sum(axis=1)
     
-    # Calculate seller likelihood score
+    # Calculate seller likelihood score (this already normalizes to 0-100)
     properties = calculate_seller_likelihood_score(properties)
     
-    # Calculate final combined score (weighted average)
+    # Store the raw scores for reference
+    properties['DesirabilityScoreCat2_Raw'] = properties['DesirabilityScoreCat2']
+    properties['SellerLikelihoodScore_Raw'] = properties['SellerLikelihoodScore']
+    
+    # Normalize desirability score to 0-100 scale
+    max_desirability = 100  # Sum of all max points from desirability factors
+    properties['DesirabilityScoreCat2'] = (properties['DesirabilityScoreCat2'] / max_desirability) * 100
+    
+    # Calculate final combined score (weighted average of normalized scores)
     properties['FinalScoreCat2'] = (
         properties['DesirabilityScoreCat2'] * 0.7 + 
         properties['SellerLikelihoodScore'] * 0.3
@@ -1120,37 +894,28 @@ def calculate_combined_scorecat2s(properties):
     
     # Assign priority tiers based on the combined final score
     def assign_tier(score):
-        # Calculate max possible score
-        max_desirability = 100  # 15+15+10+10+5+15+10+10+10+10 (includes zoning)
-        max_seller = 110  # Total possible seller likelihood points
-        max_combined = max_desirability * 0.7 + max_seller * 0.3
-        
-        if score >= max_combined * 0.8:  # 80% or higher
+        # Working with normalized scores now (0-100)
+        if score >= 80:  # 80% or higher
             return "Tier 1"
-        elif score >= max_combined * 0.65:  # 65-80%
+        elif score >= 65:  # 65-80%
             return "Tier 2"
-        elif score >= max_combined * 0.5:  # 50-65%
+        elif score >= 50:  # 50-65%
             return "Tier 3"
         else:  # Below 50%
             return "Tier 4"
     
     properties['PriorityTier'] = properties['FinalScoreCat2'].apply(assign_tier)
     
-    # Calculate max possible scores for reference
-    max_desirability = 100
-    max_seller = 110
-    max_combined = max_desirability * 0.7 + max_seller * 0.3
-    
     print("Score ranges for each tier:")
-    print(f"  Tier 1: {max_combined * 0.8:.1f}-{max_combined:.1f}")
-    print(f"  Tier 2: {max_combined * 0.65:.1f}-{max_combined * 0.8:.1f}")
-    print(f"  Tier 3: {max_combined * 0.5:.1f}-{max_combined * 0.65:.1f}")
-    print(f"  Tier 4: 0-{max_combined * 0.5:.1f}")
+    print(f"  Tier 1: 80.0-100.0")
+    print(f"  Tier 2: 65.0-80.0")
+    print(f"  Tier 3: 50.0-65.0")
+    print(f"  Tier 4: 0-50.0")
     
     return properties
 
 
-# In[17]:
+# In[45]:
 
 
 # Apply scoring functions to Category 2 properties
@@ -1170,7 +935,7 @@ if len(cat2_properties) > 0:
     
     # Display top 5 properties
     display_columns = [
-        'SiteAddr', 'SiteCity', 'SiteZIP', 'BathTtlCt', 'BedCt',
+        'SiteAddrj', 'SiteCity', 'SiteZIP', 'BathTtlCt', 'BedCt',
         'BldgSqFt', 'YrBlt', 'MktTtlVal', 'DesirabilityScoreCat2', 
         'SellerLikelihoodScore', 'FinalScoreCat2', 'PriorityTier', 'ZoneCd'
     ]
@@ -1185,7 +950,7 @@ if len(cat2_properties) > 0:
 
 # ## 11.  Reorder Results
 
-# In[18]:
+# In[ ]:
 
 
 import pandas as pd
@@ -1262,7 +1027,7 @@ def reorder_columns(df, category):
 # 
 # Save the filtered and scorecat2d properties to a CSV file for further analysis.
 
-# In[19]:
+# In[18]:
 
 
 # Save the results to a CSV file
